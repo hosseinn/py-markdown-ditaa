@@ -28,6 +28,7 @@ A Python Markdown extension to convert plain-text diagrams to images.
 import ctypes
 import os
 import platform
+import shutil
 import subprocess
 import tempfile
 import zlib
@@ -44,39 +45,48 @@ else:
         return string
 
 
-def generate_image_path(plaintext, image_dir):
-    adler32 = ctypes.c_uint32(zlib.adler32(b(plaintext))).value
-    img_basename = "diagram-%x.png" % adler32
-    image_path = os.path.join(image_dir, img_basename)
-    return image_path
-
-
-def generate_diagram(plaintext, cmd_path, image_dir):
-    """Run ditaa with plaintext input.
-    Return relative path to the generated image.
-    """
-
-    img_path = generate_image_path(plaintext, image_dir)
-    src_fd, src_fname = tempfile.mkstemp(prefix="ditaasrc", text=True)
-    out_fd, out_fname = tempfile.mkstemp(prefix="ditaaout", text=True)
-    with os.fdopen(src_fd, "w") as src:
-       src.write(plaintext)
-    try:
-        cmd = cmd_path.format(infile=src_fname, outfile=img_path).split()
-        with os.fdopen(out_fd, "w") as out:
-            retval = subprocess.check_call(cmd, stdout=out)
-        return os.path.relpath(img_path, os.getcwd())
-    except:
-        return None
-    finally:
-        os.unlink(src_fname)
-        os.unlink(out_fname)
-
-
 class DitaaPreprocessor(Preprocessor):
 
     def __init__(self, *args, **config):
         self.config = config
+
+    def generate_image_path(self, plaintext):
+        """
+        Return an image path based on a hash of the plaintext input.
+        """
+        adler32 = ctypes.c_uint32(zlib.adler32(b(plaintext))).value
+        img_basename = "diagram-%x.png" % adler32
+        image_path = os.path.join(self.config['ditaa_image_dir'], img_basename)
+        return image_path
+
+    def generate_diagram(self, plaintext):
+        """
+        Run ditaa with plaintext input.
+        Return relative path to the generated image.
+        """
+        img_dest = self.generate_image_path(plaintext)
+        src_fd, src_fname = tempfile.mkstemp(prefix="ditaasrc", text=True)
+        out_fd, out_fname = tempfile.mkstemp(prefix="ditaaout", text=True)
+        with os.fdopen(src_fd, "w") as src:
+           src.write(plaintext)
+        try:
+            ditaa_cmd = self.config['ditaa_cmd']
+            cmd = ditaa_cmd.format(infile=src_fname, outfile=img_dest)
+            with os.fdopen(out_fd, "w") as out:
+                retval = subprocess.check_call(cmd.split(), stdout=out)
+
+            if self.config.get('extra_copy_path', None):
+                try:
+                    shutil.copy(img_dest, self.config['extra_copy_path'])
+                except:
+                    pass
+            return os.path.relpath(img_dest, os.getcwd())
+
+        except Exception as e:
+            return None
+        finally:
+            os.unlink(src_fname)
+            os.unlink(out_fname)
 
     def run(self, lines):
         START_TAG = "```ditaa"
@@ -85,6 +95,7 @@ class DitaaPreprocessor(Preprocessor):
         ditaa_prefix = ""
         ditaa_lines = []
         in_diagram = False
+        path_override = None
         for ln in lines:
             if in_diagram:  # lines of a diagram
                 if ln == ditaa_prefix + END_TAG:
@@ -92,9 +103,14 @@ class DitaaPreprocessor(Preprocessor):
                     plen = len(ditaa_prefix)
                     ditaa_lines = [dln[plen:] for dln in ditaa_lines]
                     ditaa_code = "\n".join(ditaa_lines)
-                    filename = generate_diagram(ditaa_code, self.config['ditaa_cmd'], self.config['ditaa_image_dir'])
+                    filename = self.generate_diagram(ditaa_code)
                     if filename:
-                        new_lines.append(ditaa_prefix + "![%s](%s)" % (filename, filename))
+                        if path_override:
+                            mkdocs_path = os.path.join(path_override, os.path.basename(filename))
+                        else:
+                            mkdocs_path = os.path.join(self.config['extra_copy_path'], os.path.basename(filename))
+                        new_lines.append(ditaa_prefix + "![%s](%s)" % (mkdocs_path, mkdocs_path))
+                        path_override = None
                     else:
                         md_code = [ditaa_prefix + "    " + dln for dln in ditaa_lines]
                         new_lines.extend([""] + md_code + [""])
@@ -105,6 +121,11 @@ class DitaaPreprocessor(Preprocessor):
             else:  # normal lines
                 start = ln.find(START_TAG)
                 prefix = ln[:start] if start >= 0 else ""
+                postfix = ln[start + len(START_TAG) + 1:] if start >= 0 else ""
+                if postfix and postfix.startswith('path='):
+                    path_override = postfix[5:]
+                    ln = ln[:-len(postfix) - 1]
+
                 # code block may be nested within a list item or a blockquote
                 if start >= 0 and ln.endswith(START_TAG) and not prefix.strip(" \t>"):
                     in_diagram = True
@@ -121,6 +142,7 @@ class DitaaExtension(Extension):
     def __init__(self, **kwargs):
         ditaa_cmd = kwargs.get('ditaa_cmd', 'ditaa {infile} {outfile} --overwrite')
         ditaa_image_dir = kwargs.get('ditaa_image_dir', '.')
+        extra_copy_path = kwargs.get('extra_copy_path', None)
 
         if 'DITAA_CMD' in os.environ:
             ditaa_cmd = os.environ.get("DITAA_CMD")
@@ -132,7 +154,10 @@ class DitaaExtension(Extension):
                 "Full command line to launch ditaa. Defaults to:"
                 "{}".format(ditaa_cmd)],
             'ditaa_image_dir': [ditaa_image_dir,
-                "Full path to directory where images will be saved."]
+                "Full path to directory where images will be saved."],
+            'extra_copy_path': [extra_copy_path,
+                "Set this path to save an extra copy into "
+                "the specified directory."]
         }
 
         super(DitaaExtension, self).__init__(**kwargs)
@@ -141,7 +166,7 @@ class DitaaExtension(Extension):
         ditaa_ext = self.PreprocessorClass(md, self.config)
         ditaa_ext.config = self.getConfigs()
 
-        #md.registerExtension(self)
+        md.registerExtension(self)
         location = "<fenced_code" if ("fenced_code" in md.preprocessors) else "_begin"
         md.preprocessors.add("ditaa", ditaa_ext, location)
 
