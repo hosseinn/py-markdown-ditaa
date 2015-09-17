@@ -74,6 +74,9 @@ desired command line to invoke `ditaa`, for example:
 where `{infile}` and `{outfile}` are placeholders for input and output file
 names.
 
+### Testing
+When running tests, be sure that your `PATH` contains the `ditaa` executable, or set `DTIAA_CMD` appropriately as described above.
+
 Compatiblity: ditaa and fenced_code
 -----------------------------------
 
