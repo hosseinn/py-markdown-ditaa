@@ -32,7 +32,6 @@ import subprocess
 import tempfile
 import zlib
 
-
 from markdown.preprocessors import Preprocessor
 from markdown.extensions import Extension
 
@@ -45,39 +44,40 @@ else:
         return string
 
 
-DITAA_CMD = os.environ.get("DITAA_CMD", "ditaa {infile} {outfile} --overwrite")
-
-
-def generate_image_path(plaintext):
+def generate_image_path(plaintext, image_dir):
     adler32 = ctypes.c_uint32(zlib.adler32(b(plaintext))).value
-    imgbasename = "diagram-%x.png" % adler32
-    ditaa_image_dir = os.environ.get("DITAA_IMAGE_DIR", ".")
-    imgpath = os.path.join(ditaa_image_dir, imgbasename)
-    return imgpath
+    img_basename = "diagram-%x.png" % adler32
+    image_path = os.path.join(image_dir, img_basename)
+    return image_path
 
 
-def generate_diagram(plaintext):
+def generate_diagram(plaintext, cmd_path, image_dir):
     """Run ditaa with plaintext input.
     Return relative path to the generated image.
     """
-    imgpath = generate_image_path(plaintext)
-    srcfd, srcfname = tempfile.mkstemp(prefix="ditaasrc", text=True)
-    outfd, outfname = tempfile.mkstemp(prefix="ditaaout", text=True)
-    with os.fdopen(srcfd, "w") as src:
+
+    img_path = generate_image_path(plaintext, image_dir)
+    src_fd, src_fname = tempfile.mkstemp(prefix="ditaasrc", text=True)
+    out_fd, out_fname = tempfile.mkstemp(prefix="ditaaout", text=True)
+    with os.fdopen(src_fd, "w") as src:
        src.write(plaintext)
     try:
-        cmd = DITAA_CMD.format(infile=srcfname, outfile=imgpath).split()
-        with os.fdopen(outfd, "w") as out:
+        cmd = cmd_path.format(infile=src_fname, outfile=img_path).split()
+        with os.fdopen(out_fd, "w") as out:
             retval = subprocess.check_call(cmd, stdout=out)
-        return os.path.relpath(imgpath, os.getcwd())
+        return os.path.relpath(img_path, os.getcwd())
     except:
         return None
     finally:
-        os.unlink(srcfname)
-        os.unlink(outfname)
+        os.unlink(src_fname)
+        os.unlink(out_fname)
 
 
 class DitaaPreprocessor(Preprocessor):
+
+    def __init__(self, *args, **config):
+        self.config = config
+
     def run(self, lines):
         START_TAG = "```ditaa"
         END_TAG = "```"
@@ -92,7 +92,7 @@ class DitaaPreprocessor(Preprocessor):
                     plen = len(ditaa_prefix)
                     ditaa_lines = [dln[plen:] for dln in ditaa_lines]
                     ditaa_code = "\n".join(ditaa_lines)
-                    filename = generate_diagram(ditaa_code)
+                    filename = generate_diagram(ditaa_code, self.config['ditaa_cmd'], self.config['ditaa_image_dir'])
                     if filename:
                         new_lines.append(ditaa_prefix + "![%s](%s)" % (filename, filename))
                     else:
@@ -115,31 +115,36 @@ class DitaaPreprocessor(Preprocessor):
 
 
 class DitaaExtension(Extension):
+
     PreprocessorClass = DitaaPreprocessor
 
-    def __init__(self, configs=[]):
-        ditaa_cmd = os.environ.get("DITAA_CMD", "ditaa {infile} {outfile} --overwrite")
-        ditaa_image_dir = os.environ.get("DITAA_IMAGE_DIR", ".")
-        print ditaa_cmd
-        print ditaa_image_dir
+    def __init__(self, **kwargs):
+        ditaa_cmd = kwargs.get('ditaa_cmd', 'ditaa {infile} {outfile} --overwrite')
+        ditaa_image_dir = kwargs.get('ditaa_image_dir', '.')
+
+        if 'DITAA_CMD' in os.environ:
+            ditaa_cmd = os.environ.get("DITAA_CMD")
+        if 'DITAA_IMAGE_DIR' in os.environ:
+            ditaa_image_dir = os.environ.get("DITAA_IMAGE_DIR")
+
         self.config = {
-            "ditaa_cmd": [ditaa_cmd,
+            'ditaa_cmd': [ditaa_cmd,
                 "Full command line to launch ditaa. Defaults to:"
                 "{}".format(ditaa_cmd)],
-            "ditaa_image_dir": [ditaa_image_dir,
+            'ditaa_image_dir': [ditaa_image_dir,
                 "Full path to directory where images will be saved."]
         }
 
-        for k, v in configs:
-            self.setConfig(k, v)
+        super(DitaaExtension, self).__init__(**kwargs)
 
     def extendMarkdown(self, md, md_globals):
-        ditaa_ext = self.PreprocessorClass(md)
+        ditaa_ext = self.PreprocessorClass(md, self.config)
         ditaa_ext.config = self.getConfigs()
-        md.registerExtension(self)
+
+        #md.registerExtension(self)
         location = "<fenced_code" if ("fenced_code" in md.preprocessors) else "_begin"
-        md.preprocessors.add("ditaa", DitaaPreprocessor(md), location)
+        md.preprocessors.add("ditaa", ditaa_ext, location)
 
 
-def makeExtension(configs={}):
-    return DitaaExtension(configs=configs)
+def makeExtension(**kwargs):
+    return DitaaExtension(**kwargs)
