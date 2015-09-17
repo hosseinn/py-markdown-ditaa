@@ -141,5 +141,5 @@ class DitaaExtension(Extension):
         md.preprocessors.add("ditaa", DitaaPreprocessor(md), location)
 
 
-def makeExtension(**kwargs):
-    return DitaaExtension(**kwargs)
+def makeExtension(configs={}):
+    return DitaaExtension(configs=configs)
