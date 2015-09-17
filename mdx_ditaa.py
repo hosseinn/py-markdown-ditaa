@@ -115,11 +115,31 @@ class DitaaPreprocessor(Preprocessor):
 
 
 class DitaaExtension(Extension):
+    PreprocessorClass = DitaaPreprocessor
+
+    def __init__(self, configs=[]):
+        ditaa_cmd = os.environ.get("DITAA_CMD", "ditaa {infile} {outfile} --overwrite")
+        ditaa_image_dir = os.environ.get("DITAA_IMAGE_DIR", ".")
+        print ditaa_cmd
+        print ditaa_image_dir
+        self.config = {
+            "ditaa_cmd": [ditaa_cmd,
+                "Full command line to launch ditaa. Defaults to:"
+                "{}".format(ditaa_cmd)],
+            "ditaa_image_dir": [ditaa_image_dir,
+                "Full path to directory where images will be saved."]
+        }
+
+        for k, v in configs:
+            self.setConfig(k, v)
+
     def extendMarkdown(self, md, md_globals):
+        ditaa_ext = self.PreprocessorClass(md)
+        ditaa_ext.config = self.getConfigs()
         md.registerExtension(self)
         location = "<fenced_code" if ("fenced_code" in md.preprocessors) else "_begin"
         md.preprocessors.add("ditaa", DitaaPreprocessor(md), location)
 
 
-def makeExtension(**kwargs):
-    return DitaaExtension(**kwargs)
+def makeExtension(*args, **kwargs):
+    return DitaaExtension(*args, **kwargs)
