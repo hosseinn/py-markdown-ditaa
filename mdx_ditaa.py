@@ -65,6 +65,10 @@ class DitaaPreprocessor(Preprocessor):
         Return relative path to the generated image.
         """
         img_dest = self.generate_image_path(plaintext)
+
+        if os.path.exists(img_dest):
+            return os.path.relpath(img_dest, os.getcwd())
+
         src_fd, src_fname = tempfile.mkstemp(prefix="ditaasrc", text=True)
         out_fd, out_fname = tempfile.mkstemp(prefix="ditaaout", text=True)
         with os.fdopen(src_fd, "w") as src:
