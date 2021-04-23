@@ -152,7 +152,9 @@ class DitaaExtension(Extension):
             ditaa_cmd = os.environ.get("DITAA_CMD")
         if 'DITAA_IMAGE_DIR' in os.environ:
             ditaa_image_dir = os.environ.get("DITAA_IMAGE_DIR")
-
+        if 'EXTRA_COPY_PATH' in os.environ:
+            extra_copy_path = os.environ.get("EXTRA_COPY_PATH")
+ 
         self.config = {
             'ditaa_cmd': [ditaa_cmd,
                 "Full command line to launch ditaa. Defaults to:"
